@@ -29,28 +29,58 @@ fi
 echo "==> Fixing file ownership..."
 chown -R 1000:1000 /app/data 2>/dev/null || true
 
-# Create symlink from /config to /app/data/config
-# Hotio images expect /config as the data directory
-# On Cloudron, /config might be a mount point, so we can't remove it
-# Instead, we'll copy contents if needed and ensure the symlink exists
+# CRITICAL: Set up /config to point to /app/data/config
+# Hotio images expect /config as the data directory, but Cloudron mounts /app/data
+# We need /config to be writable, so we try to bind mount /app/data/config to /config
+# If /config already exists as a directory (from VOLUME declaration), we need to handle it
 if [[ -d /config ]] && [[ ! -L /config ]]; then
-    # If /config exists as a directory, copy its contents to /app/data/config
-    echo "==> Copying existing /config contents to /app/data/config..."
-    if [[ "$(ls -A /config 2>/dev/null)" ]]; then
-        cp -a /config/* /app/data/config/ 2>/dev/null || true
+    # /config exists as a directory (likely from VOLUME declaration in base image)
+    # Check if it's already a mount point
+    if ! mountpoint -q /config 2>/dev/null; then
+        # Not a mount point, try to bind mount /app/data/config to it
+        echo "==> Attempting to bind mount /app/data/config to /config..."
+        if mount --bind /app/data/config /config 2>/dev/null; then
+            echo "==> Successfully bind mounted /app/data/config to /config"
+        else
+            echo "==> WARNING: Bind mount failed (may not have capabilities), trying alternative approach..."
+            # If bind mount fails, copy contents and note the limitation
+            if [[ "$(ls -A /config 2>/dev/null)" ]]; then
+                echo "==> Copying existing /config contents to /app/data/config..."
+                cp -a /config/* /app/data/config/ 2>/dev/null || true
+            fi
+            echo "==> ERROR: Cannot make /config writable. Whisparr requires /config to be writable."
+            exit 1
+        fi
+    else
+        # Already a mount point, check if it's mounted correctly
+        echo "==> /config is already a mount point"
+        # Verify it's writable
+        if touch /config/.write_test 2>/dev/null; then
+            rm -f /config/.write_test
+            echo "==> /config is writable"
+        else
+            echo "==> ERROR: /config is mounted but not writable"
+            exit 1
+        fi
     fi
-    # Don't try to remove /config - it might be a mount point on Cloudron
-    echo "==> Note: /config exists as directory, but cannot be removed (read-only filesystem)"
-fi
-# Only create symlink if /config doesn't exist at all
-# If it's already a mount point or directory, we'll work with what we have
-if [[ ! -e /config ]]; then
-    echo "==> Creating /config symlink..."
+elif [[ ! -e /config ]]; then
+    # /config doesn't exist, create symlink (should work if bind mount isn't needed)
+    echo "==> /config doesn't exist, creating symlink..."
     ln -sf /app/data/config /config 2>/dev/null || true
-fi
-# If /config is already a symlink pointing to the right place, we're good
-if [[ -L /config ]] && [[ "$(readlink /config)" == "/app/data/config" ]]; then
-    echo "==> /config symlink already points to /app/data/config"
+    # Verify symlink was created
+    if [[ -L /config ]] && [[ "$(readlink /config)" == "/app/data/config" ]]; then
+        echo "==> Symlink created successfully"
+    else
+        echo "==> ERROR: Failed to create /config symlink"
+        exit 1
+    fi
+elif [[ -L /config ]]; then
+    # Already a symlink, verify it points to the right place
+    if [[ "$(readlink /config)" == "/app/data/config" ]]; then
+        echo "==> /config symlink already points to /app/data/config"
+    else
+        echo "==> WARNING: /config is a symlink but points to $(readlink /config), not /app/data/config"
+    fi
 fi
 
 # Set environment variables for hotio image
