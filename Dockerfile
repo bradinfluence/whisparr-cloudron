@@ -26,7 +26,7 @@ WORKDIR /app/code
 
 # Download and install Whisparr
 # Using the latest release from GitHub
-RUN WHISPARR_VERSION=$(curl -s https://api.github.com/repos/Whisparr/Whisparr/releases/latest | grep -oP '"tag_name": "\K[^"]*' | head -1) && \
+RUN WHISPARR_VERSION=$(curl -s https://api.github.com/repos/Whisparr/Whisparr/releases/latest | grep '"tag_name"' | sed 's/.*"tag_name": "\([^"]*\)".*/\1/' | head -1) && \
     echo "Installing Whisparr version: $WHISPARR_VERSION" && \
     VERSION_NUM=$(echo "$WHISPARR_VERSION" | sed 's/v//') && \
     curl -L -o /tmp/whisparr.tar.gz \
