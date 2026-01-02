@@ -27,23 +27,15 @@ if [[ ! -e /config ]]; then
     ln -sf /app/data/config /config 2>/dev/null || true
 fi
 
-# Set environment variables for hotio image
+# Set environment variables
 export PUID=1000
 export PGID=1000
 export UMASK=002
-
-# Disable VPN services (not needed for Cloudron)
-export VPN_ENABLED=false
-export VPN_TYPE=""
-export VPN_USER=""
-export VPN_PASS=""
+export TZ=${TZ:-UTC}
 
 # Set Whisparr configuration via environment variables
 export WHISPARR__PORT=6969
-export WHISPARR__BRANCH=nightly
-
-# Set timezone if available from Cloudron (optional)
-export TZ=${TZ:-UTC}
+export WHISPARR__BRANCH=master
 
 # Ensure Whisparr config.xml has the correct port (6969)
 CONFIG_DIR="/app/data/config"
@@ -91,5 +83,11 @@ EOF
     echo "==> Default config.xml created with port 6969"
 fi
 
-echo "==> Configuration complete. Whisparr will be started by s6-overlay service system."
-exit 0
+echo "==> Starting Whisparr..."
+
+# Change to Whisparr directory
+cd /app/code
+
+# Run Whisparr directly
+# Whisparr will use /config for its configuration directory (via symlink)
+exec dotnet Whisparr.dll

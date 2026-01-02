@@ -1,127 +1,59 @@
-FROM --platform=linux/amd64 ghcr.io/hotio/whisparr
+FROM --platform=linux/amd64 alpine:latest
 
-# Install runtime dependencies (hotio images are Alpine-based)
+# Install .NET runtime and dependencies
+# Whisparr requires .NET 8.0 runtime
 RUN apk add --no-cache \
-    gosu \
+    dotnet8-runtime \
     curl \
     ca-certificates \
-    shadow
+    icu-libs \
+    libintl \
+    libgcc \
+    libstdc++ \
+    sqlite-libs \
+    && rm -rf /var/cache/apk/*
 
 # Create cloudron user (UID 1000, GID 1000)
-RUN addgroup -g 1000 cloudron || true && \
-    adduser -u 1000 -G cloudron -h /home/cloudron -s /bin/sh -D cloudron || true
+RUN addgroup -g 1000 cloudron && \
+    adduser -u 1000 -G cloudron -h /home/cloudron -s /bin/sh -D cloudron
 
-# Create required directories in /app/data
-RUN mkdir -p /app/code /app/data/config /app/data/logs /run/app /run/s6-overlay && \
-    chown -R 1000:1000 /app/data 2>/dev/null || true
-
-# Remove VPN services from original /etc/s6-overlay to prevent read-only filesystem errors
-# The init-hook tries to modify these at runtime, so we remove them at build time
-RUN if [ -d /etc/s6-overlay ]; then \
-        # Remove VPN service definitions from original location
-        rm -rf /etc/s6-overlay/s6-rc.d/user/contents.d/service-privoxy 2>/dev/null || true; \
-        rm -rf /etc/s6-overlay/s6-rc.d/user/contents.d/service-unbound 2>/dev/null || true; \
-        rm -rf /etc/s6-overlay/s6-rc.d/user/contents.d/service-proton 2>/dev/null || true; \
-        rm -rf /etc/s6-overlay/s6-rc.d/user/contents.d/service-pia 2>/dev/null || true; \
-        rm -rf /etc/s6-overlay/s6-rc.d/user/contents.d/service-forwarder 2>/dev/null || true; \
-        rm -rf /etc/s6-overlay/s6-rc.d/user/contents.d/service-healthcheck 2>/dev/null || true; \
-        # Create stub init-wireguard service (empty, does nothing) instead of removing it
-        # This prevents "undefined service name" errors while keeping it non-functional
-        rm -rf /etc/s6-overlay/s6-rc.d/init-wireguard 2>/dev/null || true; \
-        mkdir -p /etc/s6-overlay/s6-rc.d/init-wireguard 2>/dev/null || true; \
-        printf '#!/bin/sh\n# Disabled for Cloudron - no VPN needed\nexit 0\n' > /etc/s6-overlay/s6-rc.d/init-wireguard/run 2>/dev/null || true; \
-        chmod +x /etc/s6-overlay/s6-rc.d/init-wireguard/run 2>/dev/null || true; \
-        # Create required 'up' file for oneshot service
-        printf '#!/bin/sh\n# Service is up immediately\nexit 0\n' > /etc/s6-overlay/s6-rc.d/init-wireguard/up 2>/dev/null || true; \
-        chmod +x /etc/s6-overlay/s6-rc.d/init-wireguard/up 2>/dev/null || true; \
-        # Also create run.up file (s6-overlay may use this instead)
-        printf '#!/bin/sh\n# Service is up immediately\nexit 0\n' > /etc/s6-overlay/s6-rc.d/init-wireguard/run.up 2>/dev/null || true; \
-        chmod +x /etc/s6-overlay/s6-rc.d/init-wireguard/run.up 2>/dev/null || true; \
-        echo 'oneshot' > /etc/s6-overlay/s6-rc.d/init-wireguard/type 2>/dev/null || true; \
-        # Remove dependency files that reference VPN services (but keep init-wireguard since we're stubbing it)
-        rm -f /etc/s6-overlay/s6-rc.d/user/dependencies.d/init-wireguard-* 2>/dev/null || true; \
-        # Remove references to VPN services (but keep init-wireguard since we're stubbing it)
-        # Specifically target bundle dependencies and type files
-        [ -f /etc/s6-overlay/s6-rc.d/user/type ] && sed -i '/service-privoxy/d; /service-unbound/d; /service-proton/d; /service-pia/d; /service-forwarder/d; /service-healthcheck/d' /etc/s6-overlay/s6-rc.d/user/type 2>/dev/null || true; \
-        [ -f /etc/s6-overlay/s6-rc.d/user/dependencies ] && sed -i '/service-privoxy/d; /service-unbound/d; /service-proton/d; /service-pia/d; /service-forwarder/d; /service-healthcheck/d' /etc/s6-overlay/s6-rc.d/user/dependencies 2>/dev/null || true; \
-        find /etc/s6-overlay/s6-rc.d/user/dependencies.d -type f 2>/dev/null -exec sed -i '/service-privoxy/d; /service-unbound/d; /service-proton/d; /service-pia/d; /service-forwarder/d; /service-healthcheck/d' {} \; 2>/dev/null || true; \
-        # Also search all files recursively for VPN services (but not init-wireguard)
-        find /etc/s6-overlay -type f 2>/dev/null -exec sh -c 'grep -q "service-privoxy\|service-unbound\|service-proton\|service-pia\|service-forwarder\|service-healthcheck" "$1" && sed -i "/service-privoxy/d; /service-unbound/d; /service-proton/d; /service-pia/d; /service-forwarder/d; /service-healthcheck/d" "$1" 2>/dev/null || true' _ {} \; || true; \
-        # Configure init-hook to ensure /app/data/config exists and has correct permissions
-        # Note: /config is a VOLUME from the base image, so we can't remove it or symlink it
-        # We'll ensure /app/data/config exists and is properly configured
-        if [ -f /etc/s6-overlay/init-hook ]; then \
-            printf '#!/bin/sh\n' > /etc/s6-overlay/init-hook; \
-            printf '# Ensure /app/data/config exists with correct permissions\n' >> /etc/s6-overlay/init-hook; \
-            printf 'mkdir -p /app/data/config 2>/dev/null || true\n' >> /etc/s6-overlay/init-hook; \
-            printf 'chown -R 1000:1000 /app/data 2>/dev/null || true\n' >> /etc/s6-overlay/init-hook; \
-            printf 'exit 0\n' >> /etc/s6-overlay/init-hook; \
-            chmod +x /etc/s6-overlay/init-hook; \
-        fi; \
-        # Create stub init-perms service (empty, does nothing) instead of removing it
-        # This prevents "undefined service name" errors while keeping it non-functional
-        # Remove entire directory first to ensure clean state, including any backup files
-        rm -rf /etc/s6-overlay/s6-rc.d/init-perms 2>/dev/null || true; \
-        find /etc/s6-overlay -name '*init-perms*' -type f -delete 2>/dev/null || true; \
-        # Recreate directory and stub script
-        mkdir -p /etc/s6-overlay/s6-rc.d/init-perms 2>/dev/null || true; \
-        # Create stub run script that does nothing (use printf to avoid heredoc issues)
-        # Make absolutely sure this is a clean file
-        rm -f /etc/s6-overlay/s6-rc.d/init-perms/run* 2>/dev/null || true; \
-        printf '#!/bin/sh\n# Disabled for Cloudron - read-only filesystem, cannot change permissions\nexit 0\n' > /etc/s6-overlay/s6-rc.d/init-perms/run || true; \
-        chmod +x /etc/s6-overlay/s6-rc.d/init-perms/run 2>/dev/null || true; \
-        # Create required 'up' file for oneshot service (signals when service is ready)
-        printf '#!/bin/sh\n# Service is up immediately\nexit 0\n' > /etc/s6-overlay/s6-rc.d/init-perms/up || true; \
-        chmod +x /etc/s6-overlay/s6-rc.d/init-perms/up 2>/dev/null || true; \
-        # Set service type to oneshot
-        echo 'oneshot' > /etc/s6-overlay/s6-rc.d/init-perms/type 2>/dev/null || true; \
-        # Verify the stub was created correctly
-        test -f /etc/s6-overlay/s6-rc.d/init-perms/run || echo "WARNING: init-perms stub not created" || true; \
-        test -f /etc/s6-overlay/s6-rc.d/init-perms/up || echo "WARNING: init-perms up file not created" || true; \
-        # Remove any dependencies.d files that might reference init-perms
-        rm -f /etc/s6-overlay/s6-rc.d/user/dependencies.d/*init-perms* 2>/dev/null || true; \
-        # Create stub init-setup service (empty, does nothing) instead of removing it
-        # This prevents "undefined service name" errors while keeping it non-functional
-        # init-setup tries to run usermod which fails on read-only filesystem
-        # We create the user in the Dockerfile, so we don't need this at runtime
-        rm -rf /etc/s6-overlay/s6-rc.d/init-setup 2>/dev/null || true; \
-        find /etc/s6-overlay -name '*init-setup*' -type f -delete 2>/dev/null || true; \
-        # Recreate directory and stub script
-        mkdir -p /etc/s6-overlay/s6-rc.d/init-setup 2>/dev/null || true; \
-        # Create stub run script that does nothing
-        rm -f /etc/s6-overlay/s6-rc.d/init-setup/run* 2>/dev/null || true; \
-        printf '#!/bin/sh\n# Disabled for Cloudron - read-only filesystem, cannot modify users\nexit 0\n' > /etc/s6-overlay/s6-rc.d/init-setup/run || true; \
-        chmod +x /etc/s6-overlay/s6-rc.d/init-setup/run 2>/dev/null || true; \
-        # Create required 'up' file for oneshot service (signals when service is ready)
-        printf '#!/bin/sh\n# Service is up immediately\nexit 0\n' > /etc/s6-overlay/s6-rc.d/init-setup/up || true; \
-        chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up 2>/dev/null || true; \
-        # Set service type to oneshot
-        echo 'oneshot' > /etc/s6-overlay/s6-rc.d/init-setup/type 2>/dev/null || true; \
-        # Verify the stub was created correctly
-        test -f /etc/s6-overlay/s6-rc.d/init-setup/run || echo "WARNING: init-setup stub not created" || true; \
-        test -f /etc/s6-overlay/s6-rc.d/init-setup/up || echo "WARNING: init-setup up file not created" || true; \
-        # Remove any dependencies.d files that might reference init-setup
-        rm -f /etc/s6-overlay/s6-rc.d/user/dependencies.d/*init-setup* 2>/dev/null || true; \
-        # Ensure all s6-overlay service scripts have execute permissions
-        # Since init-perms and init-setup are stubbed, we need to set permissions at build time
-        find /etc/s6-overlay/s6-rc.d -type f -name "run" -exec chmod +x {} \; 2>/dev/null || true; \
-        find /etc/s6-overlay/s6-rc.d -type f -name "up" -exec chmod +x {} \; 2>/dev/null || true; \
-        find /etc/s6-overlay/s6-rc.d -type f -name "down" -exec chmod +x {} \; 2>/dev/null || true; \
-        find /etc/s6-overlay/s6-rc.d -type f -name "finish" -exec chmod +x {} \; 2>/dev/null || true; \
-    fi
+# Create required directories
+RUN mkdir -p /app/code /app/data/config /app/data/logs /run/app && \
+    chown -R 1000:1000 /app/data
 
 # Set working directory
 WORKDIR /app/code
+
+# Download and install Whisparr
+# Using the latest release from GitHub
+RUN WHISPARR_VERSION=$(curl -s https://api.github.com/repos/Whisparr/Whisparr/releases/latest | grep -oP '"tag_name": "\K[^"]*' | head -1) && \
+    echo "Installing Whisparr version: $WHISPARR_VERSION" && \
+    VERSION_NUM=$(echo "$WHISPARR_VERSION" | sed 's/v//') && \
+    curl -L -o /tmp/whisparr.tar.gz \
+        "https://github.com/Whisparr/Whisparr/releases/download/${WHISPARR_VERSION}/Whisparr.master.${VERSION_NUM}.linux-core-x64.tar.gz" && \
+    tar -xzf /tmp/whisparr.tar.gz -C /app/code --strip-components=1 && \
+    rm -f /tmp/whisparr.tar.gz && \
+    chown -R 1000:1000 /app/code
 
 # Copy start script
 COPY start.sh /app/code/start.sh
 RUN chmod +x /app/code/start.sh
 
-# Use the original hotio entrypoint (/init) which starts s6-overlay
-# Our start.sh will be called by the init-setup-app service via s6-overlay
-# Don't override CMD - let hotio's /init run as PID 1
+# Set environment variables
+ENV DOTNET_ROOT=/usr/share/dotnet
+ENV PATH="${PATH}:${DOTNET_ROOT}"
+ENV WHISPARR__PORT=6969
+ENV WHISPARR__BRANCH=master
+ENV PUID=1000
+ENV PGID=1000
+ENV UMASK=002
+ENV TZ=UTC
+
+# Expose Whisparr port
 EXPOSE 6969
 
-# Keep the original entrypoint from hotio image
-# ENTRYPOINT and CMD are inherited from the base image
+# Switch to cloudron user
+USER cloudron
 
+# Set entrypoint
+ENTRYPOINT ["/app/code/start.sh"]
