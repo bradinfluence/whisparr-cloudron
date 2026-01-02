@@ -47,11 +47,15 @@ RUN if [ -d /etc/s6-overlay ]; then \
         find /etc/s6-overlay/s6-rc.d/user/dependencies.d -type f 2>/dev/null -exec sed -i '/service-privoxy/d; /service-unbound/d; /service-proton/d; /service-pia/d; /service-forwarder/d; /service-healthcheck/d' {} \; 2>/dev/null || true; \
         # Also search all files recursively for VPN services (but not init-wireguard)
         find /etc/s6-overlay -type f 2>/dev/null -exec sh -c 'grep -q "service-privoxy\|service-unbound\|service-proton\|service-pia\|service-forwarder\|service-healthcheck" "$1" && sed -i "/service-privoxy/d; /service-unbound/d; /service-proton/d; /service-pia/d; /service-forwarder/d; /service-healthcheck/d" "$1" 2>/dev/null || true' _ {} \; || true; \
-        # Disable init-hook completely (don't run original at all)
+        # Configure init-hook to ensure /app/data/config exists and has correct permissions
+        # Note: /config is a VOLUME from the base image, so we can't remove it or symlink it
+        # We'll ensure /app/data/config exists and is properly configured
         if [ -f /etc/s6-overlay/init-hook ]; then \
-            echo '#!/bin/sh' > /etc/s6-overlay/init-hook; \
-            echo '# Disabled for Cloudron - no VPN services needed' >> /etc/s6-overlay/init-hook; \
-            echo 'exit 0' >> /etc/s6-overlay/init-hook; \
+            printf '#!/bin/sh\n' > /etc/s6-overlay/init-hook; \
+            printf '# Ensure /app/data/config exists with correct permissions\n' >> /etc/s6-overlay/init-hook; \
+            printf 'mkdir -p /app/data/config 2>/dev/null || true\n' >> /etc/s6-overlay/init-hook; \
+            printf 'chown -R 1000:1000 /app/data 2>/dev/null || true\n' >> /etc/s6-overlay/init-hook; \
+            printf 'exit 0\n' >> /etc/s6-overlay/init-hook; \
             chmod +x /etc/s6-overlay/init-hook; \
         fi; \
         # Create stub init-perms service (empty, does nothing) instead of removing it
