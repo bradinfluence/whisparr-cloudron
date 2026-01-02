@@ -14,15 +14,6 @@ RUN addgroup -g 1000 cloudron || true && \
 # Create required directories
 RUN mkdir -p /app/code /app/data /run/app /run/s6-overlay
 
-# Remove /config if it exists (from base image) and create symlink to /app/data/config
-# This ensures Whisparr can write to /config (which will be /app/data/config at runtime)
-# Cloudron mounts /app/data to persistent storage, so /app/data/config will be writable
-RUN if [ -d /config ] && [ ! -L /config ]; then \
-        rm -rf /config; \
-    fi; \
-    mkdir -p /app/data/config; \
-    ln -sf /app/data/config /config || true
-
 # Remove VPN services from original /etc/s6-overlay to prevent read-only filesystem errors
 # The init-hook tries to modify these at runtime, so we remove them at build time
 RUN if [ -d /etc/s6-overlay ]; then \
