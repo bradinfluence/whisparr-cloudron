@@ -11,19 +11,9 @@ RUN apk add --no-cache \
 RUN addgroup -g 1000 cloudron || true && \
     adduser -u 1000 -G cloudron -h /home/cloudron -s /bin/sh -D cloudron || true
 
-# Create required directories
-RUN mkdir -p /app/code /app/data /run/app /run/s6-overlay
-
-# Remove /config if it exists in the base image (it's a VOLUME declaration)
-# We need /config to be available for Cloudron to mount, but the base image
-# might create it as a volume which causes issues
-# Note: We can't remove VOLUME declarations, but we can ensure /config doesn't
-# exist as a directory if it's causing issues
-RUN if [ -d /config ] && [ ! -L /config ]; then \
-        # If /config exists as a directory (not a symlink), it's from the base image
-        # We'll leave it - Cloudron should mount to it
-        echo "Note: /config directory exists in base image"; \
-    fi
+# Create required directories in /app/data
+RUN mkdir -p /app/code /app/data/config /app/data/logs /run/app /run/s6-overlay && \
+    chown -R 1000:1000 /app/data 2>/dev/null || true
 
 # Remove VPN services from original /etc/s6-overlay to prevent read-only filesystem errors
 # The init-hook tries to modify these at runtime, so we remove them at build time
