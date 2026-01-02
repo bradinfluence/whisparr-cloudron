@@ -1,0 +1,19 @@
+{
+  "id": "io.hotio.whisparr",
+  "title": "Whisparr",
+  "author": "Whisparr Team",
+  "description": "Whisparr is an adult movie collection manager for Usenet and BitTorrent users. It monitors multiple RSS feeds for new movies and interfaces with clients and indexers to grab, sort, and rename them. It can also be configured to automatically upgrade the quality of existing files in the library when a better quality format becomes available.",
+  "tagline": "Adult movie collection manager for Usenet and BitTorrent users",
+  "version": "1.0.0",
+  "healthCheckPath": "/",
+  "httpPort": 6969,
+  "memoryLimit": 536870912,
+  "manifestVersion": 2,
+  "website": "https://whisparr.org",
+  "contactEmail": "support@whisparr.org",
+  "icon": "file://icon.png",
+  "addons": {
+    "localstorage": {}
+  }
+}
+
