@@ -75,8 +75,30 @@ RUN if [ -d /etc/s6-overlay ]; then \
         test -f /etc/s6-overlay/s6-rc.d/init-perms/up || echo "WARNING: init-perms up file not created" || true; \
         # Remove any dependencies.d files that might reference init-perms
         rm -f /etc/s6-overlay/s6-rc.d/user/dependencies.d/*init-perms* 2>/dev/null || true; \
+        # Create stub init-setup service (empty, does nothing) instead of removing it
+        # This prevents "undefined service name" errors while keeping it non-functional
+        # init-setup tries to run usermod which fails on read-only filesystem
+        # We create the user in the Dockerfile, so we don't need this at runtime
+        rm -rf /etc/s6-overlay/s6-rc.d/init-setup 2>/dev/null || true; \
+        find /etc/s6-overlay -name '*init-setup*' -type f -delete 2>/dev/null || true; \
+        # Recreate directory and stub script
+        mkdir -p /etc/s6-overlay/s6-rc.d/init-setup 2>/dev/null || true; \
+        # Create stub run script that does nothing
+        rm -f /etc/s6-overlay/s6-rc.d/init-setup/run* 2>/dev/null || true; \
+        printf '#!/bin/sh\n# Disabled for Cloudron - read-only filesystem, cannot modify users\nexit 0\n' > /etc/s6-overlay/s6-rc.d/init-setup/run || true; \
+        chmod +x /etc/s6-overlay/s6-rc.d/init-setup/run 2>/dev/null || true; \
+        # Create required 'up' file for oneshot service (signals when service is ready)
+        printf '#!/bin/sh\n# Service is up immediately\nexit 0\n' > /etc/s6-overlay/s6-rc.d/init-setup/up || true; \
+        chmod +x /etc/s6-overlay/s6-rc.d/init-setup/up 2>/dev/null || true; \
+        # Set service type to oneshot
+        echo 'oneshot' > /etc/s6-overlay/s6-rc.d/init-setup/type 2>/dev/null || true; \
+        # Verify the stub was created correctly
+        test -f /etc/s6-overlay/s6-rc.d/init-setup/run || echo "WARNING: init-setup stub not created" || true; \
+        test -f /etc/s6-overlay/s6-rc.d/init-setup/up || echo "WARNING: init-setup up file not created" || true; \
+        # Remove any dependencies.d files that might reference init-setup
+        rm -f /etc/s6-overlay/s6-rc.d/user/dependencies.d/*init-setup* 2>/dev/null || true; \
         # Ensure all s6-overlay service scripts have execute permissions
-        # Since init-perms is stubbed, we need to set permissions at build time
+        # Since init-perms and init-setup are stubbed, we need to set permissions at build time
         find /etc/s6-overlay/s6-rc.d -type f -name "run" -exec chmod +x {} \; 2>/dev/null || true; \
         find /etc/s6-overlay/s6-rc.d -type f -name "up" -exec chmod +x {} \; 2>/dev/null || true; \
         find /etc/s6-overlay/s6-rc.d -type f -name "down" -exec chmod +x {} \; 2>/dev/null || true; \
